@@ -4,7 +4,10 @@
 #include "socket_server.hpp"
 #include "ipc_service.hpp"
 
-#define INNER_HEAP_SIZE 0x400000
+// Sysmodules share the small System memory pool with every other background
+// module; a 4 MB heap plus default socket buffers fails to launch on a busy
+// setup (kernel LimitReached 0x10801). 2 MB with small socket buffers fits.
+#define INNER_HEAP_SIZE 0x200000
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,7 +36,16 @@ void __appInit(void) {
     setsysExit();
   }
 
-  rc = socketInitialize(NULL);
+  // Default config reserves ~2 MB of transfer memory from the heap.
+  SocketInitConfig socket_config = *socketGetDefaultInitConfig();
+  socket_config.tcp_tx_buf_size     = 0x4000;
+  socket_config.tcp_rx_buf_size     = 0x4000;
+  socket_config.tcp_tx_buf_max_size = 0x20000;
+  socket_config.tcp_rx_buf_max_size = 0x20000;
+  socket_config.udp_tx_buf_size     = 0;
+  socket_config.udp_rx_buf_size     = 0;
+  socket_config.sb_efficiency       = 1;
+  rc = socketInitialize(&socket_config);
   if (R_FAILED(rc))
     diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
 

@@ -23,6 +23,16 @@ static std::string Trim(const std::string& s) {
   return s.substr(first, s.find_last_not_of(" \t\r\n") - first + 1);
 }
 
+// send() may write less than asked when the socket buffer is small.
+static void SendAll(int fd, const char* data, size_t len) {
+  while (len > 0) {
+    ssize_t n = ::send(fd, data, len, 0);
+    if (n <= 0) return;
+    data += n;
+    len  -= (size_t)n;
+  }
+}
+
 bool SocketServer::RecvLine(int fd, std::string& out) {
   out.clear();
   char c;
@@ -79,7 +89,7 @@ void SocketServer::SendResponse(int fd, const Response& resp) {
   }
 
   std::string out;
-  out.reserve(256 + resp.body.size());
+  out.reserve(256);
   out += "HTTP/1.1 ";
   out += std::to_string(resp.status);
   out += ' ';
@@ -97,9 +107,11 @@ void SocketServer::SendResponse(int fd, const Response& resp) {
   out += "Content-Length: ";
   out += std::to_string(resp.body.size());
   out += "\r\n\r\n";
-  out += resp.body;
 
-  ::send(fd, out.data(), out.size(), 0);
+  // Headers and body go out separately so a screenshot body is not copied
+  // a second time on the small heap.
+  SendAll(fd, out.data(), out.size());
+  SendAll(fd, resp.body.data(), resp.body.size());
 }
 
 void SocketServer::SetHandler(Handler handler) {

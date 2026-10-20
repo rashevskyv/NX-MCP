@@ -67,38 +67,80 @@ static s32 StickVal(const nlohmann::json& args, const char* stick, const char* a
 // Page-aligned work buffer required by hiddbgAttachHdlsWorkBuffer.
 alignas(0x1000) static u8 hdls_buf[0x1000];
 
-struct HdlsCtx {
-  HiddbgHdlsSessionId session;
-  HiddbgHdlsHandle    handle;
-};
+// The virtual Pro Controller stays attached for the module lifetime. Games
+// treat a detach as a controller disconnect (pause screen, controller applet)
+// and miss input sent right after a fresh attach, so attaching per call only
+// worked in the HOME menu and homebrew.
+static HiddbgHdlsSessionId g_hdls_session;
+static HiddbgHdlsHandle    g_hdls_handle;
+static bool                g_hdls_ready = false;
 
-static Result HdlsOpen(HdlsCtx& ctx) {
-  Result rc = hiddbgInitialize();
-  if (R_FAILED(rc)) return rc;
+static constexpr u32 kBatteryFull = 4;  // HidPowerInfo battery level 0..4
+static constexpr u64 kAttachSettleNs = 500000000ULL;
 
-  rc = hiddbgAttachHdlsWorkBuffer(&ctx.session, hdls_buf, sizeof(hdls_buf));
-  if (R_FAILED(rc)) { hiddbgExit(); return rc; }
+static HiddbgHdlsState IdleState() {
+  HiddbgHdlsState s = {};
+  s.battery_level = kBatteryFull;
+  s.flags         = 1;  // IsPowered
+  return s;
+}
 
-  HiddbgHdlsDeviceInfo info = {};
-  info.deviceType        = HidDeviceType_FullKey3;
-  info.npadInterfaceType = HidNpadInterfaceType_USB;
-
-  rc = hiddbgAttachHdlsVirtualDevice(&ctx.handle, &info);
-  if (R_FAILED(rc)) {
-    hiddbgReleaseHdlsWorkBuffer(ctx.session);
+// Drops a session that hid no longer accepts (another HDLS client went away,
+// console slept), so the next call starts clean.
+static void HdlsReset() {
+  if (g_hdls_handle.handle) hiddbgDetachHdlsVirtualDevice(g_hdls_handle);
+  if (g_hdls_ready) {
+    hiddbgReleaseHdlsWorkBuffer(g_hdls_session);
     hiddbgExit();
-    return rc;
   }
+  g_hdls_handle = {};
+  g_hdls_ready  = false;
+}
+
+static Result HdlsHandle(HiddbgHdlsHandle* out) {
+  Result rc;
+  if (!g_hdls_ready) {
+    rc = hiddbgInitialize();
+    if (R_FAILED(rc)) return rc;
+    rc = hiddbgAttachHdlsWorkBuffer(&g_hdls_session, hdls_buf, sizeof(hdls_buf));
+    if (R_FAILED(rc)) { hiddbgExit(); return rc; }
+    g_hdls_ready = true;
+  }
+
+  bool attached = false;
+  if (g_hdls_handle.handle)
+    hiddbgIsHdlsVirtualDeviceAttached(g_hdls_session, g_hdls_handle, &attached);
+  if (!attached) {
+    HiddbgHdlsDeviceInfo info = {};
+    info.deviceType         = HidDeviceType_FullKey3;
+    info.npadInterfaceType  = HidNpadInterfaceType_Bluetooth;
+    info.singleColorBody    = 0xFF323232;
+    info.singleColorButtons = 0xFFFFFFFF;
+    info.colorLeftGrip      = 0xFF323232;
+    info.colorRightGrip     = 0xFF323232;
+    rc = hiddbgAttachHdlsVirtualDevice(&g_hdls_handle, &info);
+    if (R_FAILED(rc)) { g_hdls_handle = {}; return rc; }
+    HiddbgHdlsState idle = IdleState();
+    hiddbgSetHdlsState(g_hdls_handle, &idle);
+    svcSleepThread((s64)kAttachSettleNs);
+  }
+  *out = g_hdls_handle;
   return 0;
 }
 
-static void HdlsClose(HdlsCtx& ctx) {
-  hiddbgDetachHdlsVirtualDevice(ctx.handle);
-  hiddbgReleaseHdlsWorkBuffer(ctx.session);
-  hiddbgExit();
+// Returns a handle that hid accepts state for, rebuilding the session once.
+static Result HdlsAcquire(HiddbgHdlsHandle* out) {
+  HiddbgHdlsState idle = IdleState();
+  Result rc = HdlsHandle(out);
+  if (R_SUCCEEDED(rc)) rc = hiddbgSetHdlsState(*out, &idle);
+  if (R_SUCCEEDED(rc)) return rc;
+  HdlsReset();
+  rc = HdlsHandle(out);
+  if (R_SUCCEEDED(rc)) rc = hiddbgSetHdlsState(*out, &idle);
+  return rc;
 }
 
-static void HidApplyStep(HdlsCtx& ctx, const nlohmann::json& step) {
+static void HidApplyStep(HiddbgHdlsHandle handle, const nlohmann::json& step) {
   u64 buttons = 0;
   if (step.contains("buttons"))
     buttons = ParseButtons(step["buttons"]);
@@ -111,22 +153,18 @@ static void HidApplyStep(HdlsCtx& ctx, const nlohmann::json& step) {
   if (step.contains("delay_ms") && step["delay_ms"].is_number())
     delay_ns = (u64)(step["delay_ms"].get<double>() * 1000000.0);
 
-  HiddbgHdlsState pressed = {};
-  pressed.battery_level    = 8;
-  pressed.flags            = 1;
+  HiddbgHdlsState pressed = IdleState();
   pressed.buttons          = buttons;
   pressed.analog_stick_l.x = StickVal(step, "stick_left",  "x");
   pressed.analog_stick_l.y = StickVal(step, "stick_left",  "y");
   pressed.analog_stick_r.x = StickVal(step, "stick_right", "x");
   pressed.analog_stick_r.y = StickVal(step, "stick_right", "y");
 
-  hiddbgSetHdlsState(ctx.handle, &pressed);
+  hiddbgSetHdlsState(handle, &pressed);
   svcSleepThread((s64)dur_ns);
 
-  HiddbgHdlsState released = {};
-  released.battery_level = 8;
-  released.flags         = 1;
-  hiddbgSetHdlsState(ctx.handle, &released);
+  HiddbgHdlsState released = IdleState();
+  hiddbgSetHdlsState(handle, &released);
 
   if (delay_ns > 0)
     svcSleepThread((s64)delay_ns);
@@ -168,16 +206,14 @@ ToolResult HidSequenceTool::Execute(const nlohmann::json& arguments) {
   if (!arguments.contains("steps") || !arguments["steps"].is_array())
     return {"steps array required", true};
 
-  HdlsCtx ctx;
-  Result rc = HdlsOpen(ctx);
+  HiddbgHdlsHandle handle;
+  Result rc = HdlsAcquire(&handle);
   if (R_FAILED(rc))
     return {"hiddbg init failed: " + FmtRc(rc), true};
 
   const nlohmann::json& steps = arguments["steps"];
   for (const auto& step : steps)
-    HidApplyStep(ctx, step);
-
-  HdlsClose(ctx);
+    HidApplyStep(handle, step);
 
   char buf[32];
   snprintf(buf, sizeof(buf), "Executed %d steps", (int)steps.size());
@@ -222,8 +258,8 @@ nlohmann::json HidPressButtonsTool::InputSchema() const {
 }
 
 ToolResult HidPressButtonsTool::Execute(const nlohmann::json& arguments) {
-  HdlsCtx ctx;
-  Result rc = HdlsOpen(ctx);
+  HiddbgHdlsHandle handle;
+  Result rc = HdlsAcquire(&handle);
   if (R_FAILED(rc))
     return {"hiddbg init failed: " + FmtRc(rc), true};
 
@@ -235,25 +271,19 @@ ToolResult HidPressButtonsTool::Execute(const nlohmann::json& arguments) {
   if (arguments.contains("duration_ms") && arguments["duration_ms"].is_number())
     dur_ns = (u64)(arguments["duration_ms"].get<double>() * 1000000.0);
 
-  HiddbgHdlsState pressed = {};
-  pressed.battery_level    = 8;
-  pressed.flags            = 1;
+  HiddbgHdlsState pressed = IdleState();
   pressed.buttons          = buttons;
   pressed.analog_stick_l.x = StickVal(arguments, "stick_left",  "x");
   pressed.analog_stick_l.y = StickVal(arguments, "stick_left",  "y");
   pressed.analog_stick_r.x = StickVal(arguments, "stick_right", "x");
   pressed.analog_stick_r.y = StickVal(arguments, "stick_right", "y");
 
-  rc = hiddbgSetHdlsState(ctx.handle, &pressed);
+  rc = hiddbgSetHdlsState(handle, &pressed);
   if (R_SUCCEEDED(rc)) {
     svcSleepThread((s64)dur_ns);
-    HiddbgHdlsState released = {};
-    released.battery_level = 8;
-    released.flags         = 1;
-    hiddbgSetHdlsState(ctx.handle, &released);
+    HiddbgHdlsState released = IdleState();
+    hiddbgSetHdlsState(handle, &released);
   }
-
-  HdlsClose(ctx);
 
   if (R_FAILED(rc))
     return {"SetHdlsState failed: " + FmtRc(rc), true};
