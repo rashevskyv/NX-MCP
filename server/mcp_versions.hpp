@@ -45,7 +45,7 @@ inline constexpr const char* kServerVersion = detail::kVersionStr.buf;
 
 inline constexpr const char* kInstructions =
     "You are connected to a Nintendo Switch running Horizon OS via the NX-MCP sysmodule "
-    "(title ID 0x0100000000057331), loaded by Atmosphère custom firmware.\n"
+    "(title ID 0x4200000000057331), loaded by Atmosphère custom firmware.\n"
     "\n"
     "Shared console — several agents use this Switch. Before you drive it, call\n"
     "console_status; if another agent is busy, wait and do not press anything. Then\n"
@@ -64,7 +64,7 @@ inline constexpr const char* kInstructions =
     "Auto-start: Atmosphère launches a sysmodule at boot when the file\n"
     "  sdmc:/atmosphere/contents/<title_id>/flags/boot2.flag exists (title IDs in paths\n"
     "  have no 0x prefix). NX-MCP boot2.flag path:\n"
-    "  sdmc:/atmosphere/contents/0100000000057331/flags/boot2.flag\n"
+    "  sdmc:/atmosphere/contents/4200000000057331/flags/boot2.flag\n"
     "\n"
     "Process model: Horizon has three memory pools — Application (foreground game),\n"
     "Applet (album/overlays), and System (sysmodules/services). pm_list_processes reports\n"
