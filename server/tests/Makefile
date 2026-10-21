@@ -10,7 +10,7 @@ CXXFLAGS := -std=c++17 -Wall -Wextra \
 
 .PHONY: all clean run
 
-all: run_tool_registry_tests run_file_transfer_tests run_ping_tests run_mcp_controller_tests run_mcp_service_tests
+all: run_tool_registry_tests run_file_transfer_tests run_ping_tests run_mcp_controller_tests run_mcp_service_tests run_console_lease_tests
 
 # ── tool registry ────────────────────────────────────────────────────────────
 
@@ -29,7 +29,8 @@ build/tool_registry.o: ../tools/tool_registry.cpp
 
 run_file_transfer_tests: build/test_file_transfer_controller.o \
                          build/file_transfer_controller.o \
-                         build/mock_file_transfer_service.o
+                         build/mock_file_transfer_service.o \
+                         build/console_lease.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 build/test_file_transfer_controller.o: controllers/test_file_transfer_controller.cpp
@@ -78,7 +79,7 @@ build/mock_mcp_service.o: services/mock_mcp_service.cpp
 
 # ── mcp service ──────────────────────────────────────────────────────────────
 
-run_mcp_service_tests: build/test_mcp_service.o build/mcp_service.o build/tool_registry.o
+run_mcp_service_tests: build/test_mcp_service.o build/mcp_service.o build/tool_registry.o build/console_lease.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 build/test_mcp_service.o: services/test_mcp_service.cpp
@@ -89,10 +90,23 @@ build/mcp_service.o: ../services/mcp_service.cpp
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
+# ── console lease ────────────────────────────────────────────────────────────
+
+run_console_lease_tests: build/test_console_lease.o build/console_lease.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+build/test_console_lease.o: services/test_console_lease.cpp
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+build/console_lease.o: ../services/console_lease.cpp
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 clean:
-	rm -rf build run_tool_registry_tests run_file_transfer_tests run_ping_tests run_mcp_controller_tests run_mcp_service_tests
+	rm -rf build run_tool_registry_tests run_file_transfer_tests run_ping_tests run_mcp_controller_tests run_mcp_service_tests run_console_lease_tests
 
 run: all
 	./run_tool_registry_tests
@@ -100,3 +114,4 @@ run: all
 	./run_ping_tests
 	./run_mcp_controller_tests
 	./run_mcp_service_tests
+	./run_console_lease_tests

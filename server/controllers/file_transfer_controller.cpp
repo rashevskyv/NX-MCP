@@ -1,4 +1,5 @@
 #include "file_transfer_controller.hpp"
+#include "console_lease.hpp"
 #include <sys/socket.h>
 #include <cstdlib>
 #include <string>
@@ -34,13 +35,23 @@ std::string FileTransferController::UrlDecode(const std::string& s) {
   return out;
 }
 
+std::string FileTransferController::QueryParam(const std::string& qs,
+                                               const std::string& name) {
+  const std::string key = name + "=";
+  size_t pos = 0;
+  while ((pos = qs.find(key, pos)) != std::string::npos) {
+    if (pos == 0 || qs[pos - 1] == '&') {
+      pos += key.size();
+      auto end = qs.find('&', pos);
+      return UrlDecode(qs.substr(pos, end == std::string::npos ? std::string::npos : end - pos));
+    }
+    pos += key.size();
+  }
+  return {};
+}
+
 std::string FileTransferController::ParsePathParam(const std::string& qs) {
-  const std::string key = "path=";
-  auto pos = qs.find(key);
-  if (pos == std::string::npos) return {};
-  pos += key.size();
-  auto end = qs.find('&', pos);
-  return UrlDecode(qs.substr(pos, end == std::string::npos ? std::string::npos : end - pos));
+  return QueryParam(qs, "path");
 }
 
 http::Response FileTransferController::Handle(const http::Request& req) {
@@ -72,6 +83,11 @@ http::Response FileTransferController::Handle(const http::Request& req) {
     if (req.method != "PUT") return http::Response::MethodNotAllowed();
     std::string path = ParsePathParam(req.query_string);
     if (path.empty()) return http::Response::BadRequest("missing path parameter");
+    // Uploads change the SD card, so they follow the same console lease as
+    // the write tools: ?agent=<session name>.
+    std::string refused =
+        services::ConsoleLease::Instance().Use(QueryParam(req.query_string, "agent"));
+    if (!refused.empty()) return {409, "text/plain", refused};
     size_t len = 0;
     auto it = req.headers.find("content-length");
     if (it != req.headers.end()) {

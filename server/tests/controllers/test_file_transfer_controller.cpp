@@ -83,25 +83,32 @@ TEST_CASE_METHOD(Fixture, "Download: OpenError returns 500") {
 
 // ── upload service status mapping ────────────────────────────────────────────
 
+TEST_CASE_METHOD(Fixture, "Upload: refused with 409 while another agent holds the console") {
+  REQUIRE(ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo&agent=t")).status == 200);
+  auto resp = ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo&agent=other"));
+  REQUIRE(resp.status == 409);
+  REQUIRE(resp.body.find("'t'") != std::string::npos);
+}
+
 TEST_CASE_METHOD(Fixture, "Upload: Ok returns 200") {
-  REQUIRE(ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo")).status == 200);
+  REQUIRE(ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo&agent=t")).status == 200);
 }
 
 TEST_CASE_METHOD(Fixture, "Upload: Incomplete returns 500 with message") {
   mock::g_upload_status = services::TransferStatus::Incomplete;
-  auto resp = ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo"));
+  auto resp = ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo&agent=t"));
   REQUIRE(resp.status == 500);
   REQUIRE(resp.body == "transfer incomplete");
 }
 
 TEST_CASE_METHOD(Fixture, "Upload: FsInit error returns 500") {
   mock::g_upload_status = services::TransferStatus::FsInit;
-  REQUIRE(ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo")).status == 500);
+  REQUIRE(ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo&agent=t")).status == 500);
 }
 
 TEST_CASE_METHOD(Fixture, "Upload: OpenError returns 500") {
   mock::g_upload_status = services::TransferStatus::OpenError;
-  REQUIRE(ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo")).status == 500);
+  REQUIRE(ctrl_.Handle(MakeReq("PUT", "/fs/upload", "path=foo&agent=t")).status == 500);
 }
 
 // ── URL decoding and path parsing ────────────────────────────────────────────
@@ -127,7 +134,7 @@ TEST_CASE_METHOD(Fixture, "Download: path stops at ampersand") {
 }
 
 TEST_CASE_METHOD(Fixture, "Upload: content-length is forwarded to service") {
-  auto req = MakeReq("PUT", "/fs/upload", "path=foo");
+  auto req = MakeReq("PUT", "/fs/upload", "path=foo&agent=t");
   req.headers["content-length"] = "1024";
   ctrl_.Handle(req);
   REQUIRE(mock::g_last_len == 1024);

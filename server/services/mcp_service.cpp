@@ -1,8 +1,33 @@
 #include "mcp_service.hpp"
 #include "mcp_versions.hpp"
 #include "tool_registry.hpp"
+#include "console_lease.hpp"
+#include <set>
 
 namespace services {
+
+// Tools that change what the console does. They need an "agent" argument and
+// go through ConsoleLease; screenshots and reads stay open to everyone.
+static bool ChangesConsole(const std::string& tool) {
+  static const std::set<std::string> kTools = {
+    "hid_press_buttons", "hid_sequence", "hid_touch", "hid_swipe",
+    "pm_launch", "pm_kill", "power",
+    "fs_write_file", "fs_delete", "fs_mkdir",
+    "mount_save", "unmount_save", "ipc_call", "ipc_close",
+  };
+  return kTools.count(tool) != 0;
+}
+
+static nlohmann::json WithAgentArgument(nlohmann::json schema) {
+  schema["properties"]["agent"] = {
+    {"type", "string"},
+    {"description", "Your session name. Shown to other agents while you drive the console."}
+  };
+  if (!schema.contains("required") || !schema["required"].is_array())
+    schema["required"] = nlohmann::json::array();
+  schema["required"].push_back("agent");
+  return schema;
+}
 
 nlohmann::json McpService::Dispatch(const std::string& method,
                                     const nlohmann::json& params,
@@ -71,10 +96,12 @@ nlohmann::json McpService::HandleDiscover(const nlohmann::json& id) {
 nlohmann::json McpService::HandleToolsList(const nlohmann::json& id) {
   nlohmann::json tool_list = nlohmann::json::array();
   for (const auto* tool : tools::ToolRegistry::Instance().All()) {
+    const std::string name = tool->Name();
     tool_list.push_back({
-      {"name", tool->Name()},
+      {"name", name},
       {"description", tool->Description()},
-      {"inputSchema", tool->InputSchema()}
+      {"inputSchema", ChangesConsole(name) ? WithAgentArgument(tool->InputSchema())
+                                           : tool->InputSchema()}
     });
   }
   return {
@@ -107,8 +134,12 @@ nlohmann::json McpService::HandleToolsCall(const nlohmann::json& params,
   const nlohmann::json arguments = params.value("arguments", nlohmann::json::object());
 
   tools::ToolResult result;
+  std::string refused;
+  if (ChangesConsole(name))
+    refused = ConsoleLease::Instance().Use(
+        arguments.is_object() ? arguments.value("agent", std::string()) : std::string());
   try {
-    result = tool->Execute(arguments);
+    result = refused.empty() ? tool->Execute(arguments) : tools::ToolResult{refused, true};
   } catch (const std::exception& e) {
     result = {std::string("Tool threw exception: ") + e.what(), true};
   } catch (...) {

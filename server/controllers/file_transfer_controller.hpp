@@ -16,6 +16,7 @@ class FileTransferController : public IController {
   services::FileTransferService service_;
   static bool SendAll(int fd, const char* data, size_t len);
   static std::string ParsePathParam(const std::string& qs);
+  static std::string QueryParam(const std::string& qs, const std::string& name);
   static std::string UrlDecode(const std::string& s);
 };
 

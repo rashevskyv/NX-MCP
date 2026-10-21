@@ -88,6 +88,7 @@ void SocketServer::SendResponse(int fd, const Response& resp) {
     case 400: reason = "Bad Request";           break;
     case 404: reason = "Not Found";             break;
     case 405: reason = "Method Not Allowed";    break;
+    case 409: reason = "Conflict";              break;
     case 500: reason = "Internal Server Error"; break;
   }
 
