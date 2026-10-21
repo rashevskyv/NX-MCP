@@ -5,17 +5,22 @@
 #include "app.hpp"
 #include "socket_server.hpp"
 #include "ipc_service.hpp"
+#include "banner.hpp"
 
 // Sysmodules share the small System memory pool with every other background
 // module; a 4 MB heap plus default socket buffers fails to launch on a busy
-// setup (kernel LimitReached 0x10801). 2 MB with small socket buffers fits.
-#define INNER_HEAP_SIZE 0x200000
+// setup (kernel LimitReached 0x10801). 2.5 MB with small socket buffers fits
+// and leaves room for the banner's two framebuffers (~0.4 MB while shown).
+#define INNER_HEAP_SIZE 0x280000
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 u32 __nx_applet_type = AppletType_None;
+// nvdrv transfer memory for the banner framebuffer; libnx's 8 MB default
+// does not fit the System pool. Same size libtesla overlays use.
+u32 __nx_nv_transfermem_size = 0x15000;
 
 // Startup trace on the SD card: a sysmodule that dies at boot leaves no
 // other sign of how far it got.
@@ -86,6 +91,7 @@ void __appExit(void) {
 
 int main(int, char*[]) {
   ipc::StartIpcThread();
+  banner::Start();
   BootLog("main: serving on 57331", 0);
   http::App app(std::make_unique<http::SocketServer>());
   app.Run(57331);

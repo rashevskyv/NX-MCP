@@ -14,7 +14,7 @@ struct Version {
   uint8_t pad_;
 };
 
-inline constexpr Version kServerVersionInfo = {1, 0, 0, 0};
+inline constexpr Version kServerVersionInfo = {1, 1, 0, 0};
 
 namespace detail {
 
