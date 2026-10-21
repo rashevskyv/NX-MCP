@@ -6,8 +6,11 @@
 #include <unistd.h>
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstring>
 #include <string>
+
+extern "C" void BootLog(const char* what, Result rc);  // main.cpp
 
 namespace http {
 
@@ -130,22 +133,29 @@ void SocketServer::HandleConnection(int fd) {
 }
 
 void SocketServer::Run(uint16_t port) {
-  int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (server_fd < 0)
-    diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
+  // Early at boot or right after a restart the port may not bind yet;
+  // retry instead of aborting the module.
+  int server_fd = -1;
+  while (true) {
+    server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd >= 0) {
+      int opt = 1;
+      ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-  int opt = 1;
-  ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+      sockaddr_in addr{};
+      addr.sin_family      = AF_INET;
+      addr.sin_addr.s_addr = INADDR_ANY;
+      addr.sin_port        = htons(port);
 
-  sockaddr_in addr{};
-  addr.sin_family      = AF_INET;
-  addr.sin_addr.s_addr = INADDR_ANY;
-  addr.sin_port        = htons(port);
-
-  if (::bind(server_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
-    diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
-  if (::listen(server_fd, 8) < 0)
-    diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
+      if (::bind(server_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
+          ::listen(server_fd, 8) == 0)
+        break;
+      ::close(server_fd);
+    }
+    BootLog("listen failed, errno", (Result)errno);
+    svcSleepThread(1000000000LL);
+  }
+  BootLog("listening", 0);
 
   while (true) {
     int client_fd = ::accept(server_fd, nullptr, nullptr);
