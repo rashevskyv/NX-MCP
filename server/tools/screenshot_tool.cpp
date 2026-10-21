@@ -52,7 +52,7 @@ ToolResult ScreenshotTool::Execute(const nlohmann::json&) {
   u64 jpeg_size = 0;
   rc = capsscCaptureJpegScreenShot(
       &jpeg_size, jpeg_buf, sizeof(jpeg_buf),
-      ViLayerStack_Default, 100000000 /* 100 ms timeout */);
+      ViLayerStack_Screenshot, 100000000 /* 100 ms timeout; excludes the agent banner */);
 
   capsscExit();
 
